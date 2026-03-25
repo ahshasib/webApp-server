@@ -19,18 +19,45 @@ mongoose.connect(process.env.MONGO_URI)
   .catch((err) => console.log(err));
 
 
+// auth middleware
+const authMiddleware = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+
+if (!authHeader) {
+  return res.status(401).json({ message: "No token" });
+}
+
+const token = authHeader.split(" ")[1]; // ✅ Bearer remove
+
+try {
+  const decoded = jwt.verify(token, process.env.JWT_SECRET);
+  req.userId = decoded.id;
+  next();
+} catch (err) {
+  return res.status(401).json({ message: "Invalid token" });
+}
+};
+
 // login and registration api start from here
 
 // Schema
 const userSchema = new mongoose.Schema({
   phone: { type: String, required: true, unique: true },
   password: { type: String, required: true },
+  fundPassword: {
+    type: String,
+    default: "",
+  },
   invitationCode: String,
-}, { timestamps: true });
 
+  taskExpireAt: {
+    type: Date,
+  }
+
+}, { timestamps: true });
 const User = mongoose.model("User", userSchema);
 
-// REGISTER
+// REGISTER ost data
 app.post("/api/register", async (req, res) => {
   try {
     const { phone, password, confirmPassword, invitationCode } = req.body;
@@ -51,10 +78,16 @@ app.post("/api/register", async (req, res) => {
 
     const hash = await bcrypt.hash(password, 10);
 
+    // ✅ 4 days later
+    const expireDate = new Date();
+    // expireDate.setMinutes(expireDate.getMinutes() + 5); 
+    expireDate.setDate(expireDate.getDate() + 4); //now we can check it change time
+
     await User.create({
       phone,
       password: hash,
       invitationCode,
+      taskExpireAt: expireDate
     });
 
     res.json({ message: "Register success ✅" });
@@ -65,7 +98,7 @@ app.post("/api/register", async (req, res) => {
 });
 
 
-// LOGIN
+// LOGIN post data
 app.post("/api/login", async (req, res) => {
   try {
     const { phone, password } = req.body;
@@ -104,6 +137,72 @@ app.post("/api/login", async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
+
+//user can update his password from his profile
+app.post("/api/update-password", authMiddleware, async (req, res) => {
+  const { oldPassword, newPassword } = req.body;
+
+  const user = await User.findById(req.userId);
+
+  const isMatch = await bcrypt.compare(oldPassword, user.password);
+
+  if (!isMatch) {
+    return res.status(400).json({ message: "Old password wrong ❌" });
+  }
+
+  const hash = await bcrypt.hash(newPassword, 10);
+  user.password = hash;
+
+  await user.save();
+
+  res.json({ message: "Password updated ✅" });
+});
+
+//user can update his fund pass from his profile
+app.post("/api/update-fund-password", authMiddleware, async (req, res) => {
+  const { newPassword } = req.body;
+
+  const user = await User.findById(req.userId);
+
+  const hash = await bcrypt.hash(newPassword, 10);
+  user.fundPassword = hash;
+
+  await user.save();
+
+  res.json({ message: "Fund password updated ✅" });
+});
+
+// user inofrmation get
+app.get("/api/user", authMiddleware, async (req, res) => {
+  const user = await User.findById(req.userId).select("-password");
+
+  res.json(user);
+});
+
+
+
+
+
+//task are user will get 4 days free tast
+app.get("/api/task-status", authMiddleware, async (req, res) => {
+  const user = await User.findById(req.userId);
+
+  const now = new Date();
+
+  if (now > user.taskExpireAt) {
+    return res.json({
+      canDoTask: false,
+      message: "your free limit is end please deposit for getting new task"
+    });
+  }
+
+  res.json({
+    canDoTask: true,
+    expireAt: user.taskExpireAt
+  });
+});
+
+
 
 
 // 🔹 Withdrawal Schema + Model
