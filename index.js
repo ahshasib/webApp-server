@@ -52,7 +52,19 @@ const userSchema = new mongoose.Schema({
 
   taskExpireAt: {
     type: Date,
+  },
+earnings: {
+    today: { type: Number, default: 0 },
+    yesterday: { type: Number, default: 0 },
+    week: { type: Number, default: 0 },
+    month: { type: Number, default: 0 },
+    total: { type: Number, default: 0 },
+  },
+  taskInfo: {
+    count: { type: Number, default: 0 },
+    lastReset: { type: Date, default: Date.now }
   }
+
 
 }, { timestamps: true });
 const User = mongoose.model("User", userSchema);
@@ -181,7 +193,7 @@ app.get("/api/user", authMiddleware, async (req, res) => {
 
 
 
-
+//-------------------- Task area started and also Earning -----------------------------
 
 //task are user will get 4 days free tast
 app.get("/api/task-status", authMiddleware, async (req, res) => {
@@ -202,8 +214,87 @@ app.get("/api/task-status", authMiddleware, async (req, res) => {
   });
 });
 
+//TASK COMPLETE API (if someone complite the task then it will update)
+app.post("/api/do-task", authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId);
+    const now = new Date();
+
+    // ❌ expire check
+    if (now > user.taskExpireAt) {
+      return res.status(400).json({
+        message: "your free limit is end"
+      });
+    }
+
+    // 🔥 24 hour reset check
+    const last = new Date(user.taskInfo.lastReset);
+    const diffHours = (now - last) / (1000 * 60 * 60);
+
+    if (diffHours >= 24) {
+      user.taskInfo.count = 0;
+      user.earnings.today = 0;
+      user.taskInfo.lastReset = now;
+    }
+
+    // ❌ max 5 task
+    if (user.taskInfo.count >= 5) {
+      return res.status(400).json({
+        message: "Daily limit finished (5 tasks)"
+      });
+    }
+
+    // ✅ add task
+    user.taskInfo.count += 1;
+
+    user.earnings.today += 5;
+    user.earnings.week += 5;
+    user.earnings.month += 5;
+    user.earnings.total += 5;
+
+    await user.save();
+
+    res.json({
+      message: "Task completed",
+      earnings: user.earnings,
+      taskCount: user.taskInfo.count
+    });
+
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+//TASK COUNT. how many tast have complited , we will get this
+app.get("/api/task-count", authMiddleware, async (req, res) => {
+  const user = await User.findById(req.userId);
+
+  const now = new Date();
+  const last = new Date(user.taskInfo.lastReset);
+
+  const diffHours = (now - last) / (1000 * 60 * 60);
+
+  let count = user.taskInfo.count;
+
+  // 🔄 auto reset
+  if (diffHours >= 24) {
+    count = 0;
+  }
+
+  res.json({ count });
+});
+
+//All earnign will show 
+app.get("/api/earnings", authMiddleware, async (req, res) => {
+  const user = await User.findById(req.userId);
+
+  res.json(user.earnings);
+});
 
 
+
+
+//----------------------wwithdrow sistem started------------------
 
 // 🔹 Withdrawal Schema + Model
 const withdrawalSchema = new mongoose.Schema({
